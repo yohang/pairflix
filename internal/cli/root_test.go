@@ -26,6 +26,24 @@ func TestRootCommandHelp(t *testing.T) {
 	}
 }
 
+func TestRootCommandRequiresOneArg(t *testing.T) {
+	t.Parallel()
+
+	for _, args := range [][]string{{}, {"a.torrent", "b.torrent"}} {
+		cmd := NewRootCommand()
+
+		var out bytes.Buffer
+
+		cmd.SetOut(&out)
+		cmd.SetErr(&out)
+		cmd.SetArgs(args)
+
+		if err := cmd.Execute(); err == nil {
+			t.Errorf("args %v: expected error, got nil", args)
+		}
+	}
+}
+
 func TestRootCommandVersion(t *testing.T) {
 	t.Parallel()
 

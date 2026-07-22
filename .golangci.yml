@@ -12,6 +12,11 @@ linters:
     - unparam
     - wsl_v5
   settings:
+    errcheck:
+      exclude-functions:
+        - fmt.Fprint
+        - fmt.Fprintf
+        - fmt.Fprintln
     revive:
       rules:
         - name: exported
