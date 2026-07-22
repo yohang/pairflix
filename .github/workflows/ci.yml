@@ -38,6 +38,7 @@ jobs:
         with:
           go-version: stable
       - name: Run tests
+        shell: bash
         run: go test -race -shuffle=on -coverprofile=coverage.out ./...
       - name: Upload coverage
         if: matrix.os == 'ubuntu-latest'
