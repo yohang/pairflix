@@ -5,48 +5,64 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"os/signal"
+	"path/filepath"
+	"strconv"
 	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
 	"golang.org/x/sync/errgroup"
 
+	"github.com/yohang/pairflix/internal/cast"
 	"github.com/yohang/pairflix/internal/engine"
 	"github.com/yohang/pairflix/internal/server"
 	"github.com/yohang/pairflix/internal/vlc"
 )
 
+// castAuto is the sentinel --cast value meaning "discover and pick".
+const castAuto = "*"
+
 // options holds the root command flags.
 type options struct {
 	vlc       bool
+	cast      string
 	listen    string
 	path      string
 	noUpload  bool
 	readahead int64 // MiB
 }
 
+// session groups everything serveLoop needs to run a streaming session.
+type session struct {
+	srv       *server.Server
+	eng       *engine.Engine
+	file      *engine.File
+	streamURL string
+	vlcBin    string
+	castDev   *cast.Device
+	errOut    io.Writer
+}
+
 // run streams the torrent or magnet in source until interrupted (or until
-// VLC exits when --vlc is set).
+// the player session ends when --vlc or --cast is set).
 func run(cmd *cobra.Command, source string, opts options) error {
 	ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
 	errOut := cmd.ErrOrStderr()
 
-	// Fail fast: locate VLC before downloading anything.
-	var vlcBin string
+	// Fail fast: locate the playback target before downloading anything.
+	vlcBin, err := findVLC(opts)
+	if err != nil {
+		return err
+	}
 
-	if opts.vlc {
-		launcher := vlc.NewLauncher()
-
-		bin, err := launcher.Find()
-		if err != nil {
-			return err
-		}
-
-		vlcBin = bin
+	castDev, err := findCastDevice(ctx, cmd, opts)
+	if err != nil {
+		return err
 	}
 
 	dataDir, err := resolveDataDir(opts.path)
@@ -86,7 +102,12 @@ func run(cmd *cobra.Command, source string, opts options) error {
 
 	srv := server.New(file)
 
-	streamURL, err := srv.Start(opts.listen)
+	listenAddr, advertiseHost, err := resolveListen(opts, castDev)
+	if err != nil {
+		return err
+	}
+
+	streamURL, err := srv.Start(listenAddr, advertiseHost)
 	if err != nil {
 		return err
 	}
@@ -94,43 +115,166 @@ func run(cmd *cobra.Command, source string, opts options) error {
 	// The URL is the only stdout output, so it stays pipeable.
 	fmt.Fprintln(cmd.OutOrStdout(), streamURL)
 
-	return serveLoop(ctx, stop, srv, eng, file, vlcBin, streamURL, errOut)
+	if castDev != nil && !cast.ProbablySupported(file.Name()) {
+		fmt.Fprintf(errOut,
+			"Warning: %s may not play on the default Chromecast receiver; casting anyway.\n",
+			filepath.Ext(file.Name()))
+	}
+
+	return serveLoop(ctx, stop, session{
+		srv:       srv,
+		eng:       eng,
+		file:      file,
+		streamURL: streamURL,
+		vlcBin:    vlcBin,
+		castDev:   castDev,
+		errOut:    errOut,
+	})
 }
 
-// serveLoop runs the HTTP server, progress reporting and optional VLC
-// session until the context is canceled.
-func serveLoop(
-	ctx context.Context,
-	cancel context.CancelFunc,
-	srv *server.Server,
-	eng *engine.Engine,
-	file *engine.File,
-	vlcBin, streamURL string,
-	errOut io.Writer,
-) error {
+// findVLC locates the VLC binary when --vlc is set.
+func findVLC(opts options) (string, error) {
+	if !opts.vlc {
+		return "", nil
+	}
+
+	return vlc.NewLauncher().Find()
+}
+
+// findCastDevice discovers and selects the Chromecast target when --cast is
+// set: by name, automatically for a single device, interactively otherwise.
+func findCastDevice(ctx context.Context, cmd *cobra.Command, opts options) (*cast.Device, error) {
+	if opts.cast == "" {
+		return nil, nil //nolint:nilnil // no cast requested is not an error
+	}
+
+	if err := validateCastListen(opts.listen); err != nil {
+		return nil, err
+	}
+
+	errOut := cmd.ErrOrStderr()
+	discoverer := cast.NewDiscoverer()
+
+	fmt.Fprintf(errOut, "Searching for Chromecast devices (%s)...\n", discoverer.Timeout)
+
+	if opts.cast != castAuto {
+		dev, err := discoverer.ByName(ctx, opts.cast)
+		if err != nil {
+			return nil, err
+		}
+
+		fmt.Fprintf(errOut, "Casting to: %s (%s)\n", dev.Name, dev.Model)
+
+		return &dev, nil
+	}
+
+	devices, err := discoverer.Devices(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	dev, err := pickDevice(cmd.InOrStdin(), errOut, devices)
+	if err != nil {
+		return nil, err
+	}
+
+	return &dev, nil
+}
+
+// validateCastListen rejects --listen addresses a Chromecast cannot reach.
+func validateCastListen(listen string) error {
+	if listen == "" {
+		return nil
+	}
+
+	host, _, err := net.SplitHostPort(listen)
+	if err != nil {
+		return fmt.Errorf("invalid --listen address %q: %w", listen, err)
+	}
+
+	if host == "localhost" {
+		return errors.New("a Chromecast cannot reach a localhost-bound server; use --listen 0.0.0.0:<port> or omit --listen")
+	}
+
+	if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
+		return errors.New("a Chromecast cannot reach a loopback-bound server; use --listen 0.0.0.0:<port> or omit --listen")
+	}
+
+	return nil
+}
+
+// resolveListen returns the bind address and the host to advertise in the
+// stream URL. Casting requires a LAN-reachable bind and URL.
+func resolveListen(opts options, castDev *cast.Device) (string, string, error) {
+	if castDev == nil {
+		return opts.listen, "", nil
+	}
+
+	lanIP, err := cast.LocalIPFor(net.JoinHostPort(castDev.Addr, strconv.Itoa(castDev.Port)))
+	if err != nil {
+		return "", "", err
+	}
+
+	if opts.listen == "" {
+		return "0.0.0.0:0", lanIP, nil
+	}
+
+	host, _, err := net.SplitHostPort(opts.listen)
+	if err != nil {
+		return "", "", fmt.Errorf("invalid --listen address %q: %w", opts.listen, err)
+	}
+
+	if host == "" || host == "0.0.0.0" || host == "::" {
+		return opts.listen, lanIP, nil
+	}
+
+	// Explicit non-wildcard host: bind and advertise it as given.
+	return opts.listen, "", nil
+}
+
+// serveLoop runs the HTTP server, progress reporting and the optional
+// player session (VLC or Chromecast) until the context is canceled.
+func serveLoop(ctx context.Context, cancel context.CancelFunc, s session) error {
 	group, gctx := errgroup.WithContext(ctx)
 
-	group.Go(srv.Serve)
+	group.Go(s.srv.Serve)
 
 	group.Go(func() error {
 		<-gctx.Done()
 
-		return srv.Close()
+		return s.srv.Close()
 	})
 
 	group.Go(func() error {
-		reportProgress(gctx, eng, file, errOut)
+		reportProgress(gctx, s.eng, s.file, s.errOut)
 
 		return nil
 	})
 
-	if vlcBin != "" {
+	if s.vlcBin != "" {
 		group.Go(func() error {
 			launcher := vlc.NewLauncher()
 
-			err := launcher.Run(gctx, vlcBin, streamURL)
+			err := launcher.Run(gctx, s.vlcBin, s.streamURL)
 
 			// VLC exiting ends the session, whatever the outcome.
+			cancel()
+
+			if err != nil && !errors.Is(err, context.Canceled) {
+				return err
+			}
+
+			return nil
+		})
+	}
+
+	if s.castDev != nil {
+		group.Go(func() error {
+			caster := cast.NewCaster()
+
+			err := caster.Run(gctx, *s.castDev, s.streamURL, server.ContentType(s.file.Name()))
+
+			// The cast session ending ends pairflix, like VLC.
 			cancel()
 
 			if err != nil && !errors.Is(err, context.Canceled) {

@@ -52,7 +52,7 @@ func startTestServer(t *testing.T, src Source) string {
 
 	srv := New(src)
 
-	streamURL, err := srv.Start("")
+	streamURL, err := srv.Start("", "")
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -171,6 +171,33 @@ func TestStartRandomPort(t *testing.T) {
 	}
 }
 
+func TestStartAdvertiseHost(t *testing.T) {
+	t.Parallel()
+
+	src := &fakeSource{name: "movie.mkv", data: []byte("x")}
+	srv := New(src)
+
+	streamURL, err := srv.Start("127.0.0.1:0", "192.168.1.50")
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	t.Cleanup(func() { srv.Close() }) //nolint:errcheck // test cleanup
+
+	u, err := url.Parse(streamURL)
+	if err != nil {
+		t.Fatalf("parse URL %q: %v", streamURL, err)
+	}
+
+	if u.Hostname() != "192.168.1.50" {
+		t.Errorf("host = %q, want advertised 192.168.1.50", u.Hostname())
+	}
+
+	if u.Port() == "" || u.Port() == "0" {
+		t.Errorf("port = %q, want the real bound port", u.Port())
+	}
+}
+
 func TestContentType(t *testing.T) {
 	t.Parallel()
 
@@ -185,8 +212,8 @@ func TestContentType(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		if got := contentType(tt.name); got != tt.want {
-			t.Errorf("contentType(%q) = %q, want %q", tt.name, got, tt.want)
+		if got := ContentType(tt.name); got != tt.want {
+			t.Errorf("ContentType(%q) = %q, want %q", tt.name, got, tt.want)
 		}
 	}
 }
@@ -195,7 +222,7 @@ func ExampleServer() {
 	src := &fakeSource{name: "movie.mkv", data: []byte("hello")}
 	srv := New(src)
 
-	streamURL, _ := srv.Start("127.0.0.1:0")
+	streamURL, _ := srv.Start("127.0.0.1:0", "")
 	defer srv.Close() //nolint:errcheck // example cleanup
 
 	u, _ := url.Parse(streamURL)

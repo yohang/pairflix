@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/yohang/pairflix/internal/cast"
 	"github.com/yohang/pairflix/internal/engine"
 )
 
@@ -89,6 +90,30 @@ func TestPickFileNoCandidates(t *testing.T) {
 
 	if _, err := pickFile(strings.NewReader(""), &out, nil); err == nil {
 		t.Error("expected error for empty candidates")
+	}
+}
+
+func TestPickDevice(t *testing.T) {
+	t.Parallel()
+
+	var out bytes.Buffer
+
+	devices := []cast.Device{
+		{Name: "Bedroom TV", Model: "Chromecast", Addr: "192.168.1.11", Port: 8009},
+		{Name: "Living Room TV", Model: "Google TV", Addr: "192.168.1.12", Port: 8009},
+	}
+
+	dev, err := pickDevice(strings.NewReader("2\n"), &out, devices)
+	if err != nil {
+		t.Fatalf("pickDevice: %v", err)
+	}
+
+	if dev.Name != "Living Room TV" {
+		t.Errorf("device = %q, want Living Room TV", dev.Name)
+	}
+
+	if !strings.Contains(out.String(), "Casting to: Living Room TV") {
+		t.Errorf("output should announce the device, got %q", out.String())
 	}
 }
 

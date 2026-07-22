@@ -33,11 +33,14 @@ internal/engine       anacrolix/torrent wrapper; engine.File implements
                       server.Source
 internal/server       HTTP server, /stream/{name} route, http.ServeContent
 internal/vlc          VLC discovery (PATH + per-OS fallbacks) and launch
+internal/cast         Chromecast mDNS discovery + playback session
+                      (go-chromecast wrapper); only discover_dns.go and
+                      session_real.go import the vishen library
 ```
 
-Dependency direction: `cli → engine, server, vlc`. `server` knows nothing
-about torrents — it consumes the `server.Source` interface (`Name`, `Size`,
-`NewReader(ctx)`).
+Dependency direction: `cli → engine, server, vlc, cast`. `server` knows
+nothing about torrents — it consumes the `server.Source` interface (`Name`,
+`Size`, `NewReader(ctx)`).
 
 The stream URL is the ONLY stdout output (pipeable); everything else goes to
 stderr.
@@ -59,6 +62,22 @@ stderr.
   `server.Server.Close()` uses `http.Server.Close()` deliberately.
 - Go's mime table lacks `.mkv` → explicit Content-Type map in
   `internal/server/server.go`.
+
+## Chromecast gotchas (go-chromecast v0.3.4 pinned)
+
+- pflag `NoOptDefVal` on --cast: `--cast NAME` does NOT parse — the value
+  form requires `--cast="NAME"`. Documented in help/README; keep it that way.
+- The device fetches the stream over the LAN: casting binds `0.0.0.0` and
+  advertises the LAN IP from `cast.LocalIPFor` (UDP dial trick, no packets).
+  Localhost binds are rejected up front (`validateCastListen`).
+- `application.MediaWait()` has no context — run it in a goroutine;
+  `Close(true)` tears down the connection and unblocks it.
+- Discovery collects the FULL 5s window (zeroconf can miss the first query)
+  and dedupes by UUID; don't return on first hit — breaks multi-device pick.
+- Audio-only filtering: TXT `ca` bitmask VIDEO_OUT bit 0; md-prefix denylist
+  fallback (`internal/cast/device.go`).
+- mkv/avi may LOAD_FAILED on the default receiver — warn-and-cast is the
+  chosen behavior, no transcoding.
 
 ## Streaming notes
 

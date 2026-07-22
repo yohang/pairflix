@@ -7,19 +7,16 @@
 A [peerflix](https://github.com/mafintosh/peerflix) equivalent written in Go:
 stream video from torrents while they download.
 
-> **Status: early development.** Project scaffold only — streaming features are
-> not implemented yet.
+## Features
 
-## Planned features
-
-- Stream video from `.torrent` files
-- Stream video from magnet links
-- Play directly in VLC
-- Serve an HTTP video stream for any player
-- Cast to Chromecast
+- Stream video from `.torrent` files and magnet links while downloading
+- Serve an HTTP video stream (Range/seek support) for any player
+- Play directly in VLC (`--vlc`)
+- Cast to Google Chromecast and Chromecast with Google TV (`--cast`)
 
 Built on [anacrolix/torrent](https://github.com/anacrolix/torrent) (BitTorrent
-engine, added when streaming lands) and [spf13/cobra](https://github.com/spf13/cobra) (CLI).
+engine), [spf13/cobra](https://github.com/spf13/cobra) (CLI) and
+[vishen/go-chromecast](https://github.com/vishen/go-chromecast) (casting).
 
 ## Install
 
@@ -32,9 +29,36 @@ Or grab a binary from the [releases page](https://github.com/yohang/pairflix/rel
 ## Usage
 
 ```sh
-pairflix --help
-pairflix --version
+# Stream and print the URL (open it in any player)
+pairflix movie.torrent
+pairflix "magnet:?xt=urn:btih:..."
+
+# Launch VLC directly; pairflix exits when VLC closes
+pairflix movie.torrent --vlc
+
+# Cast to a Chromecast; pairflix exits when playback stops
+pairflix movie.torrent --cast                     # discover, pick if several
+pairflix movie.torrent --cast="Living Room TV"    # target by name (the "=" is required!)
+
+# Options
+pairflix movie.torrent --listen 0.0.0.0:8888      # fixed listen address
+pairflix movie.torrent --path ~/Downloads/movie   # keep data somewhere specific
+pairflix movie.torrent --no-upload                # don't upload to peers
 ```
+
+The stream URL is the only stdout output, so it can be piped. Downloaded
+data is always kept on disk (the directory is printed on exit).
+
+### Casting notes
+
+- The Chromecast fetches the stream itself, so pairflix binds `0.0.0.0` on a
+  random port while casting and hands the device your LAN IP. Your firewall
+  must allow inbound connections to that port (macOS will prompt).
+- `--cast NAME` without `=` does not work — pflag optional-value flags
+  require `--cast="NAME"`.
+- The default Chromecast receiver plays mp4/webm reliably; mkv/avi may fail
+  to load (pairflix warns but casts anyway; Google TV devices are more
+  capable).
 
 ## Development
 

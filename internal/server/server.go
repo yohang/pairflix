@@ -51,8 +51,11 @@ func New(src Source) *Server {
 }
 
 // Start listens on addr ("" means 127.0.0.1 on a random free port) and
-// returns the full stream URL. It does not serve yet; call Serve.
-func (s *Server) Start(addr string) (string, error) {
+// returns the full stream URL. When advertiseHost is non-empty the URL uses
+// it instead of the bind address (needed when binding 0.0.0.0 for devices
+// that fetch the stream over the LAN, like a Chromecast). It does not serve
+// yet; call Serve.
+func (s *Server) Start(addr, advertiseHost string) (string, error) {
 	if addr == "" {
 		addr = "127.0.0.1:0"
 	}
@@ -74,9 +77,20 @@ func (s *Server) Start(addr string) (string, error) {
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
+	host := listener.Addr().String()
+
+	if advertiseHost != "" {
+		_, port, err := net.SplitHostPort(host)
+		if err != nil {
+			return "", fmt.Errorf("server: split listen address %s: %w", host, err)
+		}
+
+		host = net.JoinHostPort(advertiseHost, port)
+	}
+
 	streamURL := url.URL{
 		Scheme: "http",
-		Host:   listener.Addr().String(),
+		Host:   host,
 		Path:   streamPath,
 	}
 
@@ -109,14 +123,14 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 	reader := s.src.NewReader(r.Context())
 	defer reader.Close() //nolint:errcheck // best-effort close on a stream reader
 
-	w.Header().Set("Content-Type", contentType(name))
+	w.Header().Set("Content-Type", ContentType(name))
 
 	http.ServeContent(w, r, name, time.Time{}, reader)
 }
 
-// contentType resolves the Content-Type for a file name, preferring the
+// ContentType resolves the Content-Type for a file name, preferring the
 // explicit video map over Go's mime table (which lacks .mkv, for example).
-func contentType(name string) string {
+func ContentType(name string) string {
 	ext := strings.ToLower(filepath.Ext(name))
 
 	if ct, ok := contentTypes[ext]; ok {
