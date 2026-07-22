@@ -7,7 +7,7 @@ require (
 	github.com/anacrolix/torrent v1.61.0
 	github.com/spf13/cobra v1.10.2
 	github.com/vishen/go-chromecast v0.3.4
-	golang.org/x/sync v0.18.0
+	golang.org/x/sync v0.22.0
 )
 
 require (
