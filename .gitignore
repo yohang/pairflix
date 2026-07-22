@@ -1,0 +1,20 @@
+# Build output
+/bin/
+/dist/
+
+# Test artifacts
+coverage.out
+coverage.html
+*.test
+
+# Go workspace
+go.work
+go.work.sum
+
+# Editors
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store

@@ -1,0 +1,15 @@
+pre-commit:
+  parallel: true
+  commands:
+    lint:
+      glob: "*.go"
+      run: golangci-lint run --fix
+      stage_fixed: true
+    tidy:
+      glob: "{go.mod,go.sum,*.go}"
+      run: go mod tidy && git diff --exit-code go.mod go.sum
+
+pre-push:
+  commands:
+    test:
+      run: go test -race ./...
