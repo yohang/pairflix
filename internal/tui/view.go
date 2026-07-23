@@ -5,7 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/yohang/pairflix/internal/engine"
 	"github.com/yohang/pairflix/internal/units"
@@ -17,8 +18,16 @@ const minWidth = 40
 // maxPeerRows caps the peer table length.
 const maxPeerRows = 8
 
-// View renders the dashboard.
-func (m model) View() string {
+// View wraps the rendered dashboard in a full-screen tea view.
+func (m model) View() tea.View {
+	view := tea.NewView(m.render())
+	view.AltScreen = true
+
+	return view
+}
+
+// render produces the dashboard content.
+func (m model) render() string {
 	if m.width == 0 {
 		return "starting..."
 	}

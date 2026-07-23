@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/yohang/pairflix/internal/cast"
 	"github.com/yohang/pairflix/internal/engine"
@@ -55,7 +55,7 @@ func TestViewContainsPanes(t *testing.T) {
 		State: "PLAYING", Position: 83 * time.Second, Duration: 14 * time.Minute,
 	}))
 
-	view := m.View()
+	view := m.render()
 
 	for _, want := range []string{
 		"Movie.mkv", "mkv", "Transfer", "Playback", "Trackers", "Log",
@@ -86,7 +86,7 @@ func TestViewPeerRowsCapped(t *testing.T) {
 
 	m, _ = apply(t, m, snapshotMsg{snap: snap})
 
-	view := m.View()
+	view := m.render()
 
 	rows := 0
 
@@ -111,7 +111,7 @@ func TestViewHintWithoutControls(t *testing.T) {
 
 	m := sizedModel(t, cfg, 80)
 
-	view := m.View()
+	view := m.render()
 
 	if strings.Contains(view, "space pause") {
 		t.Error("hint should not offer cast keys without controls")
@@ -131,7 +131,7 @@ func TestViewNarrowNoPanic(t *testing.T) {
 
 	m := sizedModel(t, testConfig(), 20)
 
-	view := m.View()
+	view := m.render()
 	if !strings.Contains(view, "too narrow") {
 		t.Errorf("narrow view should say so, got %q", view)
 	}

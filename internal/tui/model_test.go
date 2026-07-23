@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/yohang/pairflix/internal/cast"
 	"github.com/yohang/pairflix/internal/engine"
@@ -65,11 +65,11 @@ func TestQuitKeys(t *testing.T) {
 	for _, key := range []string{"q", "ctrl+c"} {
 		m := newModel(Config{})
 
-		var msg tea.KeyMsg
+		var msg tea.KeyPressMsg
 		if key == "q" {
-			msg = tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}}
+			msg = tea.KeyPressMsg{Code: 'q', Text: "q"}
 		} else {
-			msg = tea.KeyMsg{Type: tea.KeyCtrlC}
+			msg = tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl}
 		}
 
 		_, cmd := apply(t, m, msg)
@@ -89,7 +89,7 @@ func TestSpaceTogglesPause(t *testing.T) {
 	controls := &fakeControls{}
 	m := newModel(Config{Controls: controls})
 
-	space := tea.KeyMsg{Type: tea.KeySpace}
+	space := tea.KeyPressMsg{Code: tea.KeySpace, Text: " "}
 
 	// PLAYING → pause.
 	m, _ = apply(t, m, castMsg(cast.MediaStatus{State: "PLAYING"}))
@@ -118,7 +118,7 @@ func TestStopKey(t *testing.T) {
 	controls := &fakeControls{}
 	m := newModel(Config{Controls: controls})
 
-	_, cmd := apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	_, cmd := apply(t, m, tea.KeyPressMsg{Code: 's', Text: "s"})
 	if cmd == nil {
 		t.Fatal("s: no command")
 	}
@@ -135,9 +135,9 @@ func TestKeysNoopWithoutControls(t *testing.T) {
 
 	m := newModel(Config{})
 
-	for _, msg := range []tea.KeyMsg{
-		{Type: tea.KeySpace},
-		{Type: tea.KeyRunes, Runes: []rune{'s'}},
+	for _, msg := range []tea.KeyPressMsg{
+		{Code: tea.KeySpace, Text: " "},
+		{Code: 's', Text: "s"},
 	} {
 		if _, cmd := apply(t, m, msg); cmd != nil {
 			t.Errorf("key %v: expected no command without controls", msg)

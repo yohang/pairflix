@@ -4,7 +4,7 @@ import (
 	"strings"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/yohang/pairflix/internal/cast"
 	"github.com/yohang/pairflix/internal/engine"
@@ -120,7 +120,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		return m, nil
 
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		return m.updateKey(msg)
 	}
 
@@ -157,12 +157,12 @@ func (m model) appendLog(at time.Time, line string) model {
 }
 
 // updateKey handles key bindings.
-func (m model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m model) updateKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "q", "ctrl+c":
 		return m, tea.Quit
 
-	case " ":
+	case "space":
 		if m.cfg.Controls == nil {
 			return m, nil
 		}

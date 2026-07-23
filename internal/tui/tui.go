@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/yohang/pairflix/internal/cast"
 	"github.com/yohang/pairflix/internal/engine"
@@ -68,7 +68,6 @@ func (u *UI) Run(ctx context.Context) error {
 	program := tea.NewProgram(
 		newModel(u.cfg),
 		tea.WithOutput(u.cfg.Out),
-		tea.WithAltScreen(),
 		tea.WithContext(ctx),
 	)
 
