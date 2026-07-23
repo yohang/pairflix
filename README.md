@@ -39,6 +39,7 @@ pairflix movie.torrent --vlc
 # Cast to a Chromecast; pairflix exits when playback stops
 pairflix movie.torrent --cast                     # discover, pick if several
 pairflix movie.torrent --cast="Living Room TV"    # target by name (the "=" is required!)
+pairflix movie.torrent --cast=192.168.1.21        # direct IP, no discovery
 
 # Options
 pairflix movie.torrent --listen 0.0.0.0:8888      # fixed listen address
@@ -56,6 +57,9 @@ data is always kept on disk (the directory is printed on exit).
   must allow inbound connections to that port (macOS will prompt).
 - `--cast NAME` without `=` does not work — pflag optional-value flags
   require `--cast="NAME"`.
+- Some devices (notably Chromecast with Google TV) answer only a fraction of
+  mDNS queries: a name search retries for up to 30s, and `--cast=IP[:port]`
+  skips discovery entirely.
 - The default Chromecast receiver plays mp4/webm reliably; mkv/avi may fail
   to load (pairflix warns but casts anyway; Google TV devices are more
   capable).

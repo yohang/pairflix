@@ -10,6 +10,8 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strconv"
+	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -46,6 +48,11 @@ type session struct {
 	errOut    io.Writer
 }
 
+// shutdownGrace is how long a graceful shutdown may take once the session
+// context is canceled before the process force-exits. Guards against rare
+// hangs in third-party teardown paths (cast connection, torrent client).
+const shutdownGrace = 15 * time.Second
+
 // run streams the torrent or magnet in source until interrupted (or until
 // the player session ends when --vlc or --cast is set).
 func run(cmd *cobra.Command, source string, opts options) error {
@@ -53,6 +60,19 @@ func run(cmd *cobra.Command, source string, opts options) error {
 	defer stop()
 
 	errOut := cmd.ErrOrStderr()
+
+	go func() {
+		<-ctx.Done()
+
+		// Restore default signal behavior: a second Ctrl+C kills the
+		// process immediately instead of being swallowed.
+		stop()
+
+		fmt.Fprintln(errOut, "\nShutting down (press Ctrl+C again to force)...")
+		time.Sleep(shutdownGrace)
+		fmt.Fprintln(errOut, "forced exit: graceful shutdown timed out")
+		os.Exit(1)
+	}()
 
 	// Fail fast: locate the playback target before downloading anything.
 	vlcBin, err := findVLC(opts)
@@ -141,8 +161,9 @@ func findVLC(opts options) (string, error) {
 	return vlc.NewLauncher().Find()
 }
 
-// findCastDevice discovers and selects the Chromecast target when --cast is
-// set: by name, automatically for a single device, interactively otherwise.
+// findCastDevice resolves the Chromecast target when --cast is set: a
+// literal IP connects directly (no discovery), a name searches until found,
+// bare --cast enumerates and picks.
 func findCastDevice(ctx context.Context, cmd *cobra.Command, opts options) (*cast.Device, error) {
 	if opts.cast == "" {
 		return nil, nil //nolint:nilnil // no cast requested is not an error
@@ -153,11 +174,20 @@ func findCastDevice(ctx context.Context, cmd *cobra.Command, opts options) (*cas
 	}
 
 	errOut := cmd.ErrOrStderr()
+
+	// Escape hatch for devices with broken mDNS: an IP targets directly.
+	if dev, ok := parseDeviceAddr(opts.cast); ok {
+		fmt.Fprintf(errOut, "Casting to: %s (direct, no discovery)\n", dev.Addr)
+
+		return dev, nil
+	}
+
 	discoverer := cast.NewDiscoverer()
 
-	fmt.Fprintf(errOut, "Searching for Chromecast devices (%s)...\n", discoverer.Timeout)
-
 	if opts.cast != castAuto {
+		fmt.Fprintf(errOut, "Searching for Chromecast %q (up to %s)...\n",
+			opts.cast, discoverer.NameTimeout)
+
 		dev, err := discoverer.ByName(ctx, opts.cast)
 		if err != nil {
 			return nil, err
@@ -167,6 +197,8 @@ func findCastDevice(ctx context.Context, cmd *cobra.Command, opts options) (*cas
 
 		return &dev, nil
 	}
+
+	fmt.Fprintf(errOut, "Searching for Chromecast devices (%s)...\n", discoverer.Timeout)
 
 	devices, err := discoverer.Devices(ctx)
 	if err != nil {
@@ -179,6 +211,35 @@ func findCastDevice(ctx context.Context, cmd *cobra.Command, opts options) (*cas
 	}
 
 	return &dev, nil
+}
+
+// defaultCastPort is the Chromecast control port used when --cast is given
+// a bare IP.
+const defaultCastPort = 8009
+
+// parseDeviceAddr interprets a --cast value as "IP" or "IP:port". Anything
+// that is not a literal IP address is a device name.
+func parseDeviceAddr(value string) (*cast.Device, bool) {
+	if ip := net.ParseIP(value); ip != nil {
+		return &cast.Device{Name: value, Addr: value, Port: defaultCastPort}, true
+	}
+
+	host, portStr, err := net.SplitHostPort(value)
+	if err != nil {
+		return nil, false
+	}
+
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return nil, false
+	}
+
+	port, err := strconv.Atoi(portStr)
+	if err != nil || port < 1 || port > 65535 {
+		return nil, false
+	}
+
+	return &cast.Device{Name: host, Addr: host, Port: port}, true
 }
 
 // validateCastListen rejects --listen addresses a Chromecast cannot reach.
@@ -237,6 +298,8 @@ func resolveListen(opts options, castDev *cast.Device) (string, string, error) {
 func serveLoop(ctx context.Context, cancel context.CancelFunc, s session) error {
 	group, gctx := errgroup.WithContext(ctx)
 
+	castStatus := &atomic.Pointer[cast.MediaStatus]{}
+
 	group.Go(s.srv.Serve)
 
 	group.Go(func() error {
@@ -246,7 +309,7 @@ func serveLoop(ctx context.Context, cancel context.CancelFunc, s session) error 
 	})
 
 	group.Go(func() error {
-		reportProgress(gctx, s.eng, s.file, s.errOut)
+		reportProgress(gctx, s.eng, s.file, castStatus, s.errOut)
 
 		return nil
 	})
@@ -272,6 +335,25 @@ func serveLoop(ctx context.Context, cancel context.CancelFunc, s session) error 
 		group.Go(func() error {
 			caster := cast.NewCaster()
 
+			var lastState string
+
+			caster.OnStatus = func(status cast.MediaStatus) {
+				castStatus.Store(&status)
+
+				if status.State == "" || status.State == lastState {
+					return
+				}
+
+				lastState = status.State
+
+				line := strings.ToLower(status.State)
+				if status.Reason != "" {
+					line += " (" + strings.ToLower(status.Reason) + ")"
+				}
+
+				fmt.Fprintf(s.errOut, "\nChromecast: %s\n", line)
+			}
+
 			err := caster.Run(gctx, *s.castDev, s.streamURL, server.ContentType(s.file.Name()))
 
 			// The cast session ending ends pairflix, like VLC.
@@ -292,8 +374,15 @@ func serveLoop(ctx context.Context, cancel context.CancelFunc, s session) error 
 	return nil
 }
 
-// reportProgress writes a single self-overwriting progress line every 2s.
-func reportProgress(ctx context.Context, eng *engine.Engine, file *engine.File, out io.Writer) {
+// reportProgress writes a single self-overwriting progress line every 2s,
+// including cast playback state when available.
+func reportProgress(
+	ctx context.Context,
+	eng *engine.Engine,
+	file *engine.File,
+	castStatus *atomic.Pointer[cast.MediaStatus],
+	out io.Writer,
+) {
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 
@@ -311,10 +400,53 @@ func reportProgress(ctx context.Context, eng *engine.Engine, file *engine.File, 
 				pct = float64(done) / float64(total) * 100
 			}
 
-			fmt.Fprintf(out, "\r⇣ %s / %s (%.1f%%)  peers: %d   ",
-				humanBytes(done), humanBytes(total), pct, stats.Peers)
+			fmt.Fprintf(out, "\r⇣ %s / %s (%.1f%%)  peers: %d%s   ",
+				humanBytes(done), humanBytes(total), pct, stats.Peers,
+				castSuffix(castStatus.Load()))
 		}
 	}
+}
+
+// castSuffix renders the playback part of the progress line, e.g.
+// " | ▶ 01:23/14:48". Empty when no playback status is known.
+func castSuffix(status *cast.MediaStatus) string {
+	if status == nil || status.State == "" ||
+		status.State == cast.StateConnected || status.State == cast.StateDisconnected {
+		return ""
+	}
+
+	icons := map[string]string{
+		"PLAYING":   "▶",
+		"PAUSED":    "⏸",
+		"BUFFERING": "◌",
+	}
+
+	icon, ok := icons[status.State]
+	if !ok {
+		icon = strings.ToLower(status.State)
+	}
+
+	if status.Duration <= 0 {
+		return " | " + icon
+	}
+
+	return fmt.Sprintf(" | %s %s/%s", icon,
+		fmtPlayTime(status.Position), fmtPlayTime(status.Duration))
+}
+
+// fmtPlayTime formats a playback position as mm:ss, or h:mm:ss past an hour.
+func fmtPlayTime(d time.Duration) string {
+	d = d.Round(time.Second)
+
+	h := int(d.Hours())
+	m := int(d.Minutes()) % 60
+	s := int(d.Seconds()) % 60
+
+	if h > 0 {
+		return fmt.Sprintf("%d:%02d:%02d", h, m, s)
+	}
+
+	return fmt.Sprintf("%02d:%02d", m, s)
 }
 
 // resolveDataDir returns path (created if needed) or a fresh temp dir.

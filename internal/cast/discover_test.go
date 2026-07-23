@@ -10,7 +10,8 @@ import (
 
 func fakeDiscoverer(entries ...Entry) *Discoverer {
 	return &Discoverer{
-		Timeout: 100 * time.Millisecond,
+		Timeout:     100 * time.Millisecond,
+		NameTimeout: 300 * time.Millisecond,
 		DiscoverFn: func(ctx context.Context) (<-chan Entry, error) {
 			ch := make(chan Entry, len(entries))
 
@@ -156,6 +157,42 @@ func TestDevicesToleratesOneFailedRound(t *testing.T) {
 
 	if len(devices) != 1 || devices[0].Name != "TV" {
 		t.Errorf("devices = %v, want the second-round TV", devices)
+	}
+}
+
+func TestByNameRetriesUntilFound(t *testing.T) {
+	t.Parallel()
+
+	// The target only answers the third query, like a flaky real device.
+	round := 0
+	d := &Discoverer{
+		Timeout:     40 * time.Millisecond,
+		NameTimeout: time.Second,
+		DiscoverFn: func(context.Context) (<-chan Entry, error) {
+			round++
+			ch := make(chan Entry, 1)
+
+			if round == 3 {
+				ch <- Entry{UUID: "tv", Name: "TV", Model: "Google TV", CA: "199173", Addr: "192.168.1.21", Port: 8009}
+			}
+
+			close(ch)
+
+			return ch, nil
+		},
+	}
+
+	dev, err := d.ByName(context.Background(), "tv")
+	if err != nil {
+		t.Fatalf("ByName: %v", err)
+	}
+
+	if dev.Addr != "192.168.1.21" {
+		t.Errorf("Addr = %q, want 192.168.1.21", dev.Addr)
+	}
+
+	if round < 3 {
+		t.Errorf("rounds = %d, want at least 3 (retry until found)", round)
 	}
 }
 

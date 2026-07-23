@@ -3,6 +3,7 @@ package cli
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/yohang/pairflix/internal/cast"
 )
@@ -96,6 +97,85 @@ func TestResolveListenCastWildcard(t *testing.T) {
 
 	if advertise == "" {
 		t.Error("advertise should be the LAN IP for a wildcard bind")
+	}
+}
+
+func TestParseDeviceAddr(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		value    string
+		wantOK   bool
+		wantAddr string
+		wantPort int
+	}{
+		{"192.168.1.21", true, "192.168.1.21", 8009},
+		{"192.168.1.21:9000", true, "192.168.1.21", 9000},
+		{"TV", false, "", 0},
+		{"Living Room TV", false, "", 0},
+		{"*", false, "", 0},
+		{"192.168.1.21:notaport", false, "", 0},
+		{"nothost:9000", false, "", 0},
+	}
+
+	for _, tt := range tests {
+		dev, ok := parseDeviceAddr(tt.value)
+		if ok != tt.wantOK {
+			t.Errorf("parseDeviceAddr(%q) ok = %v, want %v", tt.value, ok, tt.wantOK)
+
+			continue
+		}
+
+		if !ok {
+			continue
+		}
+
+		if dev.Addr != tt.wantAddr || dev.Port != tt.wantPort {
+			t.Errorf("parseDeviceAddr(%q) = %s:%d, want %s:%d",
+				tt.value, dev.Addr, dev.Port, tt.wantAddr, tt.wantPort)
+		}
+	}
+}
+
+func TestFmtPlayTime(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		d    time.Duration
+		want string
+	}{
+		{0, "00:00"},
+		{83 * time.Second, "01:23"},
+		{59*time.Minute + 59*time.Second, "59:59"},
+		{time.Hour + 2*time.Minute + 3*time.Second, "1:02:03"},
+	}
+
+	for _, tt := range tests {
+		if got := fmtPlayTime(tt.d); got != tt.want {
+			t.Errorf("fmtPlayTime(%v) = %q, want %q", tt.d, got, tt.want)
+		}
+	}
+}
+
+func TestCastSuffix(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		status *cast.MediaStatus
+		want   string
+	}{
+		{nil, ""},
+		{&cast.MediaStatus{State: cast.StateConnected}, ""},
+		{&cast.MediaStatus{State: "PLAYING", Position: 83 * time.Second, Duration: 14*time.Minute + 48*time.Second}, " | ▶ 01:23/14:48"},
+		{&cast.MediaStatus{State: "PAUSED", Position: time.Second, Duration: time.Minute}, " | ⏸ 00:01/01:00"},
+		{&cast.MediaStatus{State: "BUFFERING"}, " | ◌"},
+		{&cast.MediaStatus{State: "IDLE"}, " | idle"},
+	}
+
+	for _, tt := range tests {
+		if got := castSuffix(tt.status); got != tt.want {
+			t.Errorf("castSuffix(%+v) = %q, want %q", tt.status, got, tt.want)
+		}
 	}
 }
 

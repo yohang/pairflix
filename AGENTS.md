@@ -74,10 +74,19 @@ stderr.
   `Close(true)` tears down the connection and unblocks it.
 - Discovery collects the FULL 5s window (zeroconf can miss the first query)
   and dedupes by UUID; don't return on first hit — breaks multi-device pick.
+- Real devices can answer as little as 2/10 queries (measured on a
+  Chromecast with Google TV). Hence: enumeration runs 2 query rounds per
+  window; ByName retries rounds up to NameTimeout (30s) with early exit;
+  --cast accepts a literal IP[:port] to bypass discovery entirely
+  (parseDeviceAddr in internal/cli/run.go).
 - Audio-only filtering: TXT `ca` bitmask VIDEO_OUT bit 0; md-prefix denylist
   fallback (`internal/cast/device.go`).
 - mkv/avi may LOAD_FAILED on the default receiver — warn-and-cast is the
   chosen behavior, no transcoding.
+- Playback feedback: Caster.OnStatus receives a synthetic CONNECTED then
+  polled MediaStatus snapshots (2s); the CLI prints state transitions and
+  folds position/duration into the progress line (castSuffix in
+  internal/cli/run.go).
 
 ## Streaming notes
 
