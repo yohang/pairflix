@@ -19,6 +19,39 @@ engine), [spf13/cobra](https://github.com/spf13/cobra) (CLI) and
 
 ## Install
 
+### Debian / Ubuntu (APT)
+
+Packages for amd64 and arm64 are published to a signed APT repository:
+
+```sh
+sudo install -d -m 0755 /etc/apt/keyrings
+sudo curl -fsSL http://yohan.giarel.li/pairflix/public.gpg \
+  -o /etc/apt/keyrings/pairflix.gpg
+
+sudo tee /etc/apt/sources.list.d/pairflix.sources > /dev/null <<'EOF'
+Types: deb
+URIs: http://yohan.giarel.li/pairflix/repo
+Suites: stable
+Components: main
+Architectures: amd64 arm64
+Signed-By: /etc/apt/keyrings/pairflix.gpg
+EOF
+
+sudo apt update && sudo apt install pairflix
+```
+
+One-line source format for older releases:
+
+```sh
+echo "deb [arch=amd64,arm64 signed-by=/etc/apt/keyrings/pairflix.gpg] http://yohan.giarel.li/pairflix/repo stable main" \
+  | sudo tee /etc/apt/sources.list.d/pairflix.list
+```
+
+The `stable` suite works on any Debian or Ubuntu release — the binaries
+are static and dependency-free.
+
+### Other platforms
+
 ```sh
 go install github.com/yohang/pairflix/cmd/pairflix@latest
 ```

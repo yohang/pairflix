@@ -25,3 +25,17 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publish APT repository
+        uses: smeinecke/apt-repo-action@b12d0c7cf1297211dbdf15c05b1dba5849ede9bb # v2.1.8
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          repo_supported_arch: |
+            amd64
+            arm64
+          repo_supported_version: |
+            stable
+          file: dist/*.deb
+          file_target_version: stable
+          private_key: ${{ secrets.APT_GPG_PRIVATE_KEY }}
+          key_passphrase: ${{ secrets.APT_GPG_PASSPHRASE }}
+          skip_duplicates: true
