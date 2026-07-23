@@ -1,0 +1,20 @@
+[Unit]
+Description=pairflix web-triggered torrent streaming
+Documentation=https://github.com/yohang/pairflix
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+DynamicUser=yes
+StateDirectory=pairflix-webserver
+EnvironmentFile=/etc/default/pairflix-webserver
+# Through a shell so quoting inside PAIRFLIX_WEBSERVER_OPTS works (systemd's
+# own $VAR expansion word-splits without honoring quotes, which would break
+# --cast="Living Room TV"). --path first so a user-supplied --path in the
+# options wins (last occurrence wins).
+ExecStart=/bin/sh -c 'eval exec /usr/bin/pairflix webserver --path="$STATE_DIRECTORY" $PAIRFLIX_WEBSERVER_OPTS'
+Restart=on-failure
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target

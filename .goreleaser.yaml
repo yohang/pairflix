@@ -57,6 +57,41 @@ nfpms:
       - src: LICENSE
         dst: /usr/share/doc/pairflix/copyright
 
+  # Meta package (no binary): systemd service running `pairflix webserver`.
+  - id: webserver-deb
+    package_name: pairflix-webserver
+    formats: [deb]
+    meta: true
+    file_name_template: "{{ .PackageName }}_{{ .Version }}_all"
+    maintainer: Yohan Giarelli <yohan@les-tilleuls.coop>
+    homepage: https://github.com/yohang/pairflix
+    description: |-
+      Run the pairflix web interface as a systemd service.
+      Serves the pairflix webserver mode as a daemon: a web page that
+      streams submitted torrents and magnet links to the configured
+      backend (Chromecast, VLC or a plain HTTP stream URL).
+    license: GPL-3.0
+    section: utils
+    priority: optional
+    dependencies:
+      - pairflix
+    contents:
+      - src: packaging/pairflix-webserver.service
+        dst: /usr/lib/systemd/system/pairflix-webserver.service
+        file_info:
+          mode: 0644
+      - src: packaging/pairflix-webserver.default
+        dst: /etc/default/pairflix-webserver
+        type: config|noreplace
+        file_info:
+          mode: 0644
+      - src: LICENSE
+        dst: /usr/share/doc/pairflix-webserver/copyright
+    scripts:
+      postinstall: packaging/deb/postinstall.sh
+      preremove: packaging/deb/preremove.sh
+      postremove: packaging/deb/postremove.sh
+
 checksum:
   name_template: checksums.txt
 
