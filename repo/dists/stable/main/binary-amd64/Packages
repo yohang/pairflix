@@ -1,0 +1,18 @@
+Package: pairflix
+Version: 0.2.1
+Architecture: amd64
+Architecture-Variant: amd64v1
+Maintainer: Yohan Giarelli <yohan@les-tilleuls.coop>
+Installed-Size: 25398
+Homepage: https://github.com/yohang/pairflix
+Priority: optional
+Section: utils
+Filename: pool/main/p/pairflix/pairflix_0.2.1_amd64.deb
+Size: 9635146
+SHA256: a71e91211b1535eaa1adc5e5ff4ff98a41c5da7cd4747f9963f43717de74f83f
+SHA1: 08ebf10b6042cbd327e0e4374d8e313edec48494
+MD5sum: 621a82ed7f03f993294b8e032b44525b
+Description: Stream video from torrents while they download.
+ A peerflix equivalent written in Go: serves an HTTP video stream with
+ Range/seek support, plays directly in VLC and casts to Chromecast.
+
