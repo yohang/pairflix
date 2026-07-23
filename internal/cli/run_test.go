@@ -159,6 +159,49 @@ func TestCastSuffix(t *testing.T) {
 	}
 }
 
+func TestWebserverCommandRegistered(t *testing.T) {
+	t.Parallel()
+
+	cmd := NewRootCommand()
+
+	sub, _, err := cmd.Find([]string{"webserver"})
+	if err != nil || sub.Name() != "webserver" {
+		t.Fatalf("webserver subcommand not found: %v", err)
+	}
+}
+
+func TestWebserverRequiresAddr(t *testing.T) {
+	t.Parallel()
+
+	cmd := NewRootCommand()
+
+	var out strings.Builder
+
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"webserver"})
+
+	if err := cmd.Execute(); err == nil {
+		t.Fatal("webserver without addr should error")
+	}
+}
+
+func TestWebserverCastVLCExclusive(t *testing.T) {
+	t.Parallel()
+
+	cmd := NewRootCommand()
+
+	var out strings.Builder
+
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"webserver", ":8080", "--vlc", "--cast"})
+
+	if err := cmd.Execute(); err == nil {
+		t.Fatal("expected mutual-exclusion error")
+	}
+}
+
 func TestCastAndVLCMutuallyExclusive(t *testing.T) {
 	t.Parallel()
 

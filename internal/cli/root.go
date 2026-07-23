@@ -55,6 +55,8 @@ to launch VLC directly. Downloaded data is kept on disk.`,
 
 	cmd.MarkFlagsMutuallyExclusive("vlc", "cast")
 
+	cmd.AddCommand(newWebserverCommand())
+
 	return cmd
 }
 

@@ -45,7 +45,6 @@ type App interface {
 	Load(url string, startTime int, contentType string, transcode, detach, forceDetach bool) error
 	Update() error
 	MediaStatus() (MediaStatus, bool)
-	MediaWait()
 	Pause() error
 	Unpause() error
 	StopMedia() error
@@ -147,32 +146,26 @@ func (c *Caster) Run(ctx context.Context, dev Device, streamURL, contentType str
 	}
 
 	if err := c.load(ctx, app, streamURL, contentType); err != nil {
-		_ = app.Close(true)
+		closeBounded(app)
 
 		return fmt.Errorf("cast: load media on %s: %w", dev.Name, err)
 	}
 
-	// gone is closed by the status poller when the receiver app
-	// disappears — MediaWait alone does not notice a closed app.
+	// The status poller is the session's lifecycle authority: ended is
+	// closed when playback reaches a terminal idle state, gone when the
+	// receiver app disappears. (go-chromecast's MediaWait is deliberately
+	// unused: it can neither be canceled nor unblocked externally.)
+	ended := make(chan struct{})
 	gone := make(chan struct{})
 
 	pollCtx, stopPoll := context.WithCancel(ctx)
 	defer stopPoll()
 
-	go c.pollStatus(pollCtx, app, gone)
-
-	// MediaWait has no context support; Close below unblocks it by
-	// tearing down the connection.
-	done := make(chan struct{})
-
-	go func() {
-		app.MediaWait()
-		close(done)
-	}()
+	go c.pollStatus(pollCtx, app, ended, gone)
 
 	select {
-	case <-done:
-		_ = app.Close(true)
+	case <-ended:
+		closeBounded(app)
 
 		return nil
 	case <-gone:
@@ -180,20 +173,48 @@ func (c *Caster) Run(ctx context.Context, dev Device, streamURL, contentType str
 			c.OnStatus(MediaStatus{State: StateDisconnected})
 		}
 
-		_ = app.Close(true)
+		closeBounded(app)
 
 		return nil
 	case <-ctx.Done():
-		_ = app.Close(true)
+		closeBounded(app)
 
 		return fmt.Errorf("cast: session canceled: %w", ctx.Err())
 	}
 }
 
-// pollStatus refreshes device state every StatusInterval, reports playback
-// snapshots to OnStatus, and closes gone when the receiver app vanishes
-// after having shown media at least once.
-func (c *Caster) pollStatus(ctx context.Context, app App, gone chan<- struct{}) {
+// closeBoundedGrace bounds how long a session teardown may take:
+// go-chromecast's Close can block indefinitely against an unresponsive
+// device, and callers (like the web mode) must not hang on Stop.
+const closeBoundedGrace = 5 * time.Second
+
+// closeBounded closes app, abandoning the attempt (and its goroutine)
+// after closeBoundedGrace.
+func closeBounded(app App) {
+	done := make(chan struct{})
+
+	go func() {
+		_ = app.Close(true)
+
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(closeBoundedGrace):
+	}
+}
+
+// terminalIdleReasons are the receiver idle reasons that end a session.
+var terminalIdleReasons = map[string]bool{
+	"FINISHED": true, "CANCELLED": true, "INTERRUPTED": true, "ERROR": true,
+}
+
+// pollStatus refreshes device state every StatusInterval and reports
+// playback snapshots to OnStatus. It closes ended when playback reaches a
+// terminal idle state and gone when the receiver app vanishes after having
+// shown media at least once.
+func (c *Caster) pollStatus(ctx context.Context, app App, ended, gone chan<- struct{}) {
 	interval := c.StatusInterval
 	if interval <= 0 {
 		interval = 2 * time.Second
@@ -232,6 +253,12 @@ func (c *Caster) pollStatus(ctx context.Context, app App, gone chan<- struct{}) 
 					c.OnStatus(status)
 				}
 
+				if status.State == "IDLE" && terminalIdleReasons[status.Reason] {
+					close(ended)
+
+					return
+				}
+
 				continue
 			}
 
@@ -265,7 +292,10 @@ func (c *Caster) load(ctx context.Context, app App, streamURL, contentType strin
 			_ = app.Update()
 		}
 
-		lastErr = app.Load(streamURL, 0, contentType, false, false, false)
+		// detach=true: for URL media, go-chromecast otherwise blocks
+		// inside Load until playback finishes (it calls MediaWait), which
+		// would make the session uncancelable.
+		lastErr = app.Load(streamURL, 0, contentType, false, true, false)
 		if lastErr == nil {
 			return nil
 		}

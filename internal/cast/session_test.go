@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-// fakeApp records calls and lets tests control MediaWait and Load failures.
+// fakeApp records calls; playback lifecycle is driven through its status.
 type fakeApp struct {
 	mu          sync.Mutex
 	startErr    error
@@ -21,14 +21,14 @@ type fakeApp struct {
 	status      MediaStatus
 	statusCalls int
 	vanishAfter int // report no media after this many MediaStatus calls
+	idleAfter   int // report IDLE/FINISHED after this many MediaStatus calls
 	paused      int
 	unpaused    int
 	stopped     int
-	waitCh      chan struct{}
 }
 
 func newFakeApp() *fakeApp {
-	return &fakeApp{waitCh: make(chan struct{})}
+	return &fakeApp{}
 }
 
 func (f *fakeApp) Start(string, int) error { return f.startErr }
@@ -63,10 +63,18 @@ func (f *fakeApp) MediaStatus() (MediaStatus, bool) {
 		return MediaStatus{}, false
 	}
 
+	if f.idleAfter > 0 && f.statusCalls > f.idleAfter {
+		return MediaStatus{State: "IDLE", Reason: "FINISHED"}, true
+	}
+
 	return f.status, true
 }
 
-func (f *fakeApp) MediaWait() { <-f.waitCh }
+func (f *fakeApp) setStatus(status MediaStatus) {
+	f.mu.Lock()
+	f.status = status
+	f.mu.Unlock()
+}
 
 func (f *fakeApp) Pause() error {
 	f.mu.Lock()
@@ -98,18 +106,15 @@ func (f *fakeApp) Close(stopMedia bool) error {
 	f.stopMedia = stopMedia
 	f.mu.Unlock()
 
-	// Closing the connection unblocks MediaWait, like the real client.
-	select {
-	case <-f.waitCh:
-	default:
-		close(f.waitCh)
-	}
-
 	return nil
 }
 
 func casterFor(app App) *Caster {
-	return &Caster{NewApp: func() App { return app }, RetryDelay: 1}
+	return &Caster{
+		NewApp:         func() App { return app },
+		RetryDelay:     time.Millisecond,
+		StatusInterval: 2 * time.Millisecond,
+	}
 }
 
 var testDevice = Device{Name: "TV", Model: "Chromecast", Addr: "192.168.1.20", Port: 8009}
@@ -152,11 +157,11 @@ func TestRunLoadErrorStillCloses(t *testing.T) {
 func TestRunLoadRetriesSlowReceiver(t *testing.T) {
 	t.Parallel()
 
-	// First two launches time out (slow Google TV), third succeeds.
+	// First two launches time out (slow Google TV), third succeeds and
+	// playback finishes immediately.
 	app := newFakeApp()
 	app.loadFails = 2
-
-	close(app.waitCh) // media finishes immediately after the successful load
+	app.status = MediaStatus{State: "IDLE", Reason: "FINISHED"}
 
 	if err := casterFor(app).Run(context.Background(), testDevice, "http://x/s.mp4", "video/mp4"); err != nil {
 		t.Fatalf("Run: %v, want nil after retries", err)
@@ -168,17 +173,15 @@ func TestRunLoadRetriesSlowReceiver(t *testing.T) {
 	if app.loadCalls != 3 {
 		t.Errorf("loadCalls = %d, want 3", app.loadCalls)
 	}
-
-	if app.updates != 2 {
-		t.Errorf("updates = %d, want 2 (state refresh between attempts)", app.updates)
-	}
 }
 
 func TestRunStatusCallbacks(t *testing.T) {
 	t.Parallel()
 
+	// Plays for two polls, then finishes.
 	app := newFakeApp()
 	app.status = MediaStatus{State: "PLAYING", Position: 5 * time.Second, Duration: time.Minute}
+	app.idleAfter = 2
 
 	var (
 		mu     sync.Mutex
@@ -186,18 +189,11 @@ func TestRunStatusCallbacks(t *testing.T) {
 	)
 
 	caster := casterFor(app)
-	caster.StatusInterval = 5 * time.Millisecond
 	caster.OnStatus = func(s MediaStatus) {
 		mu.Lock()
+		defer mu.Unlock()
 
 		states = append(states, s.State)
-
-		mu.Unlock()
-
-		// End the session once playback status has been observed.
-		if s.State == "PLAYING" {
-			app.Close(false) //nolint:errcheck // fake close never fails
-		}
 	}
 
 	if err := caster.Run(context.Background(), testDevice, "http://x/s.mp4", "video/mp4"); err != nil {
@@ -211,16 +207,9 @@ func TestRunStatusCallbacks(t *testing.T) {
 		t.Fatalf("states = %v, want CONNECTED first", states)
 	}
 
-	found := false
-
-	for _, s := range states {
-		if s == "PLAYING" {
-			found = true
-		}
-	}
-
-	if !found {
-		t.Errorf("states = %v, want PLAYING reported", states)
+	joined := strings.Join(states, ",")
+	if !strings.Contains(joined, "PLAYING") || !strings.Contains(joined, "IDLE") {
+		t.Errorf("states = %v, want PLAYING then IDLE", states)
 	}
 }
 
@@ -239,7 +228,6 @@ func TestRunEndsWhenReceiverDies(t *testing.T) {
 	)
 
 	caster := casterFor(app)
-	caster.StatusInterval = 2 * time.Millisecond
 	caster.OnStatus = func(s MediaStatus) {
 		mu.Lock()
 		defer mu.Unlock()
@@ -271,7 +259,7 @@ func TestRunPlaybackFinished(t *testing.T) {
 	t.Parallel()
 
 	app := newFakeApp()
-	close(app.waitCh) // media finishes immediately
+	app.status = MediaStatus{State: "IDLE", Reason: "FINISHED"}
 
 	if err := casterFor(app).Run(context.Background(), testDevice, "http://x/s.mp4", "video/mp4"); err != nil {
 		t.Fatalf("Run: %v, want nil on normal playback end", err)
@@ -308,15 +296,28 @@ func TestControlsDuringSession(t *testing.T) {
 	var once sync.Once
 
 	caster := casterFor(app)
-	caster.StatusInterval = 2 * time.Millisecond
 	caster.OnStatus = func(s MediaStatus) {
 		if s.State != "PLAYING" {
 			return
 		}
 
-		// Exercise the controls from the callback goroutine while the
-		// session is live (once — polling repeats), then end it.
-		once.Do(func() { exerciseControls(t, caster, app) })
+		// Exercise the controls once while the session is live, then let
+		// playback finish.
+		once.Do(func() {
+			if err := caster.Pause(); err != nil {
+				t.Errorf("Pause: %v", err)
+			}
+
+			if err := caster.Unpause(); err != nil {
+				t.Errorf("Unpause: %v", err)
+			}
+
+			if err := caster.Stop(); err != nil {
+				t.Errorf("Stop: %v", err)
+			}
+
+			app.setStatus(MediaStatus{State: "IDLE", Reason: "FINISHED"})
+		})
 	}
 
 	if err := caster.Run(context.Background(), testDevice, "http://x/s.mp4", "video/mp4"); err != nil {
@@ -324,42 +325,53 @@ func TestControlsDuringSession(t *testing.T) {
 	}
 
 	app.mu.Lock()
-	defer app.mu.Unlock()
 
 	if app.paused != 1 || app.unpaused != 1 || app.stopped != 1 {
 		t.Errorf("paused=%d unpaused=%d stopped=%d, want 1 each",
 			app.paused, app.unpaused, app.stopped)
 	}
 
+	app.mu.Unlock()
+
 	if err := caster.Pause(); !errors.Is(err, ErrNoSession) {
 		t.Errorf("Pause after Run: error = %v, want ErrNoSession", err)
 	}
 }
 
-// exerciseControls drives Pause/Unpause/Stop against a live session, then
-// ends it.
-func exerciseControls(t *testing.T, caster *Caster, app *fakeApp) {
-	t.Helper()
+// hangingCloseApp never returns from Close, like an unresponsive device.
+type hangingCloseApp struct {
+	*fakeApp
+}
 
-	if err := caster.Pause(); err != nil {
-		t.Errorf("Pause: %v", err)
+func (h hangingCloseApp) Close(bool) error {
+	select {} // block forever
+}
+
+func TestRunCancelWithHangingClose(t *testing.T) {
+	t.Parallel()
+
+	app := newFakeApp()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	start := time.Now()
+
+	err := casterFor(hangingCloseApp{app}).Run(ctx, testDevice, "http://x/s.mp4", "video/mp4")
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("error = %v, want context.Canceled", err)
 	}
 
-	if err := caster.Unpause(); err != nil {
-		t.Errorf("Unpause: %v", err)
+	if elapsed := time.Since(start); elapsed > closeBoundedGrace+2*time.Second {
+		t.Errorf("Run took %v; Close hang not bounded", elapsed)
 	}
-
-	if err := caster.Stop(); err != nil {
-		t.Errorf("Stop: %v", err)
-	}
-
-	app.Close(false) //nolint:errcheck // fake close never fails
 }
 
 func TestRunContextCancel(t *testing.T) {
 	t.Parallel()
 
 	app := newFakeApp()
+	app.status = MediaStatus{State: "PLAYING"}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()

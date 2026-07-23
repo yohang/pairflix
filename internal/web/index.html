@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>pairflix</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font-family: system-ui, sans-serif; max-width: 40rem; margin: 2rem auto; padding: 0 1rem; }
+  h1 { font-size: 1.4rem; }
+  fieldset { border: 1px solid #8884; border-radius: 8px; margin-bottom: 1rem; padding: 1rem; }
+  textarea { width: 100%; min-height: 4rem; box-sizing: border-box; font-family: monospace; }
+  button { padding: .5rem 1.5rem; font-size: 1rem; cursor: pointer; }
+  #stop { background: #b33; color: white; border: none; border-radius: 6px; }
+  .status { padding: .8rem; border-radius: 8px; background: #8881; margin-bottom: 1rem; }
+  .error { color: #c33; }
+  .muted { opacity: .65; font-size: .9rem; }
+  label.file-choice { display: block; margin: .3rem 0; }
+</style>
+</head>
+<body>
+<h1>pairflix</h1>
+<div class="status" id="status">loading…</div>
+
+<form id="form">
+  <fieldset id="magnet-box">
+    <legend>Magnet link</legend>
+    <textarea id="magnet" placeholder="magnet:?xt=urn:btih:…"></textarea>
+  </fieldset>
+  <fieldset id="upload-box">
+    <legend>…or torrent file</legend>
+    <input type="file" id="torrent" accept=".torrent">
+  </fieldset>
+  <button type="submit" id="stream">Stream</button>
+</form>
+
+<div id="select-box" hidden>
+  <h2>Pick a file</h2>
+  <div id="choices"></div>
+</div>
+
+<button id="stop" hidden>Stop</button>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let lastState = null;
+
+async function poll() {
+  try {
+    const st = await (await fetch('/api/status')).json();
+    render(st);
+  } catch (e) { $('status').textContent = 'server unreachable'; }
+  setTimeout(poll, 1000);
+}
+
+function render(st) {
+  const busy = st.state !== 'idle' && st.state !== 'error';
+  $('form').hidden = busy;
+  $('stop').hidden = !busy;
+  $('select-box').hidden = st.state !== 'selecting';
+
+  let line = `backend: ${st.backend}` + (st.device ? ` — ${st.device}` : '');
+  line += ` · state: ${st.state}`;
+  if (st.torrent) line += ` · ${st.torrent}`;
+  let html = escapeHtml(line);
+  if (st.file) html += `<br>file: ${escapeHtml(st.file)}`;
+  if (st.streamUrl) html += `<br>stream: <a href="${encodeURI(st.streamUrl)}">${escapeHtml(st.streamUrl)}</a>`;
+  if (st.error) html += `<br><span class="error">${escapeHtml(st.error)}</span>`;
+  $('status').innerHTML = html;
+
+  if (st.state === 'selecting' && lastState !== 'selecting') {
+    $('choices').innerHTML = '';
+    for (const f of st.files || []) {
+      const label = document.createElement('label');
+      label.className = 'file-choice';
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.textContent = `${f.path} (${(f.size / 1048576).toFixed(1)} MiB)`;
+      btn.onclick = () => post('/api/select', { index: f.index });
+      label.appendChild(btn);
+      $('choices').appendChild(label);
+    }
+  }
+  lastState = st.state;
+}
+
+function escapeHtml(s) {
+  return s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+async function post(url, body) {
+  const resp = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!resp.ok) showError(resp);
+}
+
+async function showError(resp) {
+  try {
+    const data = await resp.json();
+    $('status').innerHTML += `<br><span class="error">${escapeHtml(data.error || resp.statusText)}</span>`;
+  } catch { /* keep polling-rendered status */ }
+}
+
+$('form').addEventListener('submit', async (ev) => {
+  ev.preventDefault();
+  const magnet = $('magnet').value.trim();
+  const file = $('torrent').files[0];
+
+  if (file) {
+    const fd = new FormData();
+    fd.append('torrent', file);
+    const resp = await fetch('/api/stream', { method: 'POST', body: fd });
+    if (!resp.ok) showError(resp);
+  } else if (magnet) {
+    await post('/api/stream', { magnet });
+  } else {
+    $('status').innerHTML += '<br><span class="error">paste a magnet link or choose a torrent file</span>';
+  }
+});
+
+$('stop').addEventListener('click', () => fetch('/api/stop', { method: 'POST' }));
+
+poll();
+</script>
+</body>
+</html>
