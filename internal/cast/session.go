@@ -2,7 +2,9 @@ package cast
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"sync"
 	"time"
 )
 
@@ -44,6 +46,9 @@ type App interface {
 	Update() error
 	MediaStatus() (MediaStatus, bool)
 	MediaWait()
+	Pause() error
+	Unpause() error
+	StopMedia() error
 	Close(stopMedia bool) error
 }
 
@@ -52,6 +57,10 @@ type App interface {
 // needs longer to start it; the launch continues device-side after the
 // client timeout, so a retry attaches to the now-running app.
 const loadAttempts = 3
+
+// ErrNoSession is returned by playback controls when no cast session is
+// active.
+var ErrNoSession = errors.New("cast: no active session")
 
 // Caster plays a stream URL on a Chromecast device.
 type Caster struct {
@@ -67,6 +76,48 @@ type Caster struct {
 	// the connection is established and a playback status snapshot every
 	// StatusInterval. Called from a single goroutine.
 	OnStatus func(MediaStatus)
+
+	// mu guards app, which is set while a Run session is active so the
+	// playback controls below can reach it from other goroutines.
+	mu  sync.Mutex
+	app App
+}
+
+// setApp records (or clears, with nil) the active session app.
+func (c *Caster) setApp(app App) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	c.app = app
+}
+
+// control runs f against the active session app, or returns ErrNoSession.
+func (c *Caster) control(f func(App) error) error {
+	c.mu.Lock()
+	app := c.app
+	c.mu.Unlock()
+
+	if app == nil {
+		return ErrNoSession
+	}
+
+	return f(app)
+}
+
+// Pause pauses playback on the active session.
+func (c *Caster) Pause() error {
+	return c.control(App.Pause)
+}
+
+// Unpause resumes playback on the active session.
+func (c *Caster) Unpause() error {
+	return c.control(App.Unpause)
+}
+
+// Stop stops the media on the active session; the session then ends the
+// usual way (MediaWait returns or the receiver goes idle).
+func (c *Caster) Stop() error {
+	return c.control(App.StopMedia)
 }
 
 // NewCaster returns a Caster backed by go-chromecast.
@@ -87,6 +138,9 @@ func (c *Caster) Run(ctx context.Context, dev Device, streamURL, contentType str
 	if err := app.Start(dev.Addr, dev.Port); err != nil {
 		return fmt.Errorf("cast: connect to %s (%s): %w", dev.Name, dev.Addr, err)
 	}
+
+	c.setApp(app)
+	defer c.setApp(nil)
 
 	if c.OnStatus != nil {
 		c.OnStatus(MediaStatus{State: StateConnected})

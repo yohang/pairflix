@@ -21,6 +21,9 @@ type fakeApp struct {
 	status      MediaStatus
 	statusCalls int
 	vanishAfter int // report no media after this many MediaStatus calls
+	paused      int
+	unpaused    int
+	stopped     int
 	waitCh      chan struct{}
 }
 
@@ -64,6 +67,30 @@ func (f *fakeApp) MediaStatus() (MediaStatus, bool) {
 }
 
 func (f *fakeApp) MediaWait() { <-f.waitCh }
+
+func (f *fakeApp) Pause() error {
+	f.mu.Lock()
+	f.paused++
+	f.mu.Unlock()
+
+	return nil
+}
+
+func (f *fakeApp) Unpause() error {
+	f.mu.Lock()
+	f.unpaused++
+	f.mu.Unlock()
+
+	return nil
+}
+
+func (f *fakeApp) StopMedia() error {
+	f.mu.Lock()
+	f.stopped++
+	f.mu.Unlock()
+
+	return nil
+}
 
 func (f *fakeApp) Close(stopMedia bool) error {
 	f.mu.Lock()
@@ -256,6 +283,77 @@ func TestRunPlaybackFinished(t *testing.T) {
 	if app.loadCalls != 1 || !app.closed {
 		t.Errorf("loadCalls=%d closed=%v, want 1 and true", app.loadCalls, app.closed)
 	}
+}
+
+func TestControlsRequireSession(t *testing.T) {
+	t.Parallel()
+
+	caster := casterFor(newFakeApp())
+
+	for name, f := range map[string]func() error{
+		"Pause": caster.Pause, "Unpause": caster.Unpause, "Stop": caster.Stop,
+	} {
+		if err := f(); !errors.Is(err, ErrNoSession) {
+			t.Errorf("%s without session: error = %v, want ErrNoSession", name, err)
+		}
+	}
+}
+
+func TestControlsDuringSession(t *testing.T) {
+	t.Parallel()
+
+	app := newFakeApp()
+	app.status = MediaStatus{State: "PLAYING"}
+
+	var once sync.Once
+
+	caster := casterFor(app)
+	caster.StatusInterval = 2 * time.Millisecond
+	caster.OnStatus = func(s MediaStatus) {
+		if s.State != "PLAYING" {
+			return
+		}
+
+		// Exercise the controls from the callback goroutine while the
+		// session is live (once — polling repeats), then end it.
+		once.Do(func() { exerciseControls(t, caster, app) })
+	}
+
+	if err := caster.Run(context.Background(), testDevice, "http://x/s.mp4", "video/mp4"); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	app.mu.Lock()
+	defer app.mu.Unlock()
+
+	if app.paused != 1 || app.unpaused != 1 || app.stopped != 1 {
+		t.Errorf("paused=%d unpaused=%d stopped=%d, want 1 each",
+			app.paused, app.unpaused, app.stopped)
+	}
+
+	if err := caster.Pause(); !errors.Is(err, ErrNoSession) {
+		t.Errorf("Pause after Run: error = %v, want ErrNoSession", err)
+	}
+}
+
+// exerciseControls drives Pause/Unpause/Stop against a live session, then
+// ends it.
+func exerciseControls(t *testing.T, caster *Caster, app *fakeApp) {
+	t.Helper()
+
+	if err := caster.Pause(); err != nil {
+		t.Errorf("Pause: %v", err)
+	}
+
+	if err := caster.Unpause(); err != nil {
+		t.Errorf("Unpause: %v", err)
+	}
+
+	if err := caster.Stop(); err != nil {
+		t.Errorf("Stop: %v", err)
+	}
+
+	app.Close(false) //nolint:errcheck // fake close never fails
 }
 
 func TestRunContextCancel(t *testing.T) {

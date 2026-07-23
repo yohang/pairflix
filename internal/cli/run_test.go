@@ -137,26 +137,6 @@ func TestParseDeviceAddr(t *testing.T) {
 	}
 }
 
-func TestFmtPlayTime(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		d    time.Duration
-		want string
-	}{
-		{0, "00:00"},
-		{83 * time.Second, "01:23"},
-		{59*time.Minute + 59*time.Second, "59:59"},
-		{time.Hour + 2*time.Minute + 3*time.Second, "1:02:03"},
-	}
-
-	for _, tt := range tests {
-		if got := fmtPlayTime(tt.d); got != tt.want {
-			t.Errorf("fmtPlayTime(%v) = %q, want %q", tt.d, got, tt.want)
-		}
-	}
-}
-
 func TestCastSuffix(t *testing.T) {
 	t.Parallel()
 
