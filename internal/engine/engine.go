@@ -54,6 +54,9 @@ func New(cfg Config) (*Engine, error) {
 	ccfg.DataDir = cfg.DataDir
 	ccfg.NoUpload = cfg.NoUpload
 	ccfg.Logger = discardLogger()
+	// Random BitTorrent listen port: avoids clashes between concurrent
+	// pairflix instances (and parallel tests).
+	ccfg.ListenPort = 0
 
 	client, err := torrent.NewClient(ccfg)
 	if err != nil {

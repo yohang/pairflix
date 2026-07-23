@@ -49,6 +49,7 @@ to launch VLC directly. Downloaded data is kept on disk.`,
 	flags.StringVar(&opts.path, "path", "", "download directory (default: a new temp dir, kept on exit)")
 	flags.BoolVar(&opts.noUpload, "no-upload", false, "do not upload to peers")
 	flags.Int64Var(&opts.readahead, "readahead", 16, "stream readahead in MiB")
+	flags.BoolVar(&opts.noTUI, "no-tui", false, "disable the full-screen dashboard (auto-disabled without a terminal)")
 
 	flags.Lookup("cast").NoOptDefVal = castAuto
 

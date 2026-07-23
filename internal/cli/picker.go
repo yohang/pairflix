@@ -9,6 +9,7 @@ import (
 
 	"github.com/yohang/pairflix/internal/cast"
 	"github.com/yohang/pairflix/internal/engine"
+	"github.com/yohang/pairflix/internal/units"
 )
 
 // errNoSelection is returned when input ends before a valid choice is made.
@@ -59,7 +60,7 @@ func pick(in io.Reader, out io.Writer, header string, labels []string) (int, err
 func pickFile(in io.Reader, out io.Writer, candidates []engine.FileInfo) (int, error) {
 	labels := make([]string, len(candidates))
 	for i, c := range candidates {
-		labels[i] = fmt.Sprintf("%s (%s)", c.Path, humanBytes(c.Length))
+		labels[i] = fmt.Sprintf("%s (%s)", c.Path, units.HumanBytes(c.Length))
 	}
 
 	i, err := pick(in, out, "Multiple video files found:", labels)
@@ -67,7 +68,7 @@ func pickFile(in io.Reader, out io.Writer, candidates []engine.FileInfo) (int, e
 		return 0, err
 	}
 
-	fmt.Fprintf(out, "Streaming: %s (%s)\n", candidates[i].Path, humanBytes(candidates[i].Length))
+	fmt.Fprintf(out, "Streaming: %s (%s)\n", candidates[i].Path, units.HumanBytes(candidates[i].Length))
 
 	return candidates[i].Index, nil
 }

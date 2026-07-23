@@ -36,6 +36,9 @@ internal/vlc          VLC discovery (PATH + per-OS fallbacks) and launch
 internal/cast         Chromecast mDNS discovery + playback session
                       (go-chromecast wrapper); only discover_dns.go and
                       session_real.go import the vishen library
+internal/tui          Bubble Tea dashboard; consumes engine.Snapshot and
+                      cast.MediaStatus only — never imports anacrolix
+internal/units        shared byte/rate/time formatting
 ```
 
 Dependency direction: `cli → engine, server, vlc, cast`. `server` knows
@@ -105,6 +108,21 @@ stderr.
   ignored errors need `_ =` or a nolint with reason.
 - `revive` checks doc comments on exported symbols including private-receiver
   methods.
+
+## TUI notes
+
+- The dashboard renders to stderr (`tea.WithOutput`) in alt-screen mode so
+  stdout stays a bare pipeable stream URL. UI selection: `chooseUI` in
+  internal/cli/run.go — TUI needs stderr AND stdin to be terminals and no
+  `--no-tui`.
+- The cli↔UI seam is `sessionUI` (internal/cli/ui.go); `plainUI` is the
+  historical line output and must stay byte-compatible.
+- The model is pure: tests drive `Update`/`View` directly, never
+  `tea.Program.Run` (CI has no TTY). `tui.UI.send` buffers messages sent
+  before `Run` starts.
+- Cast controls run as `tea.Cmd` (network I/O must not block `Update`).
+- engine.Snapshot is the only data bridge — keep anacrolix types out of
+  the tui package.
 
 ## Testing rules
 

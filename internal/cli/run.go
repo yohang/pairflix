@@ -10,8 +10,6 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strconv"
-	"strings"
-	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -21,6 +19,8 @@ import (
 	"github.com/yohang/pairflix/internal/cast"
 	"github.com/yohang/pairflix/internal/engine"
 	"github.com/yohang/pairflix/internal/server"
+	"github.com/yohang/pairflix/internal/tui"
+	"github.com/yohang/pairflix/internal/units"
 	"github.com/yohang/pairflix/internal/vlc"
 )
 
@@ -34,6 +34,7 @@ type options struct {
 	listen    string
 	path      string
 	noUpload  bool
+	noTUI     bool
 	readahead int64 // MiB
 }
 
@@ -45,6 +46,8 @@ type session struct {
 	streamURL string
 	vlcBin    string
 	castDev   *cast.Device
+	caster    *cast.Caster
+	ui        sessionUI
 	errOut    io.Writer
 }
 
@@ -135,9 +138,11 @@ func run(cmd *cobra.Command, source string, opts options) error {
 	// The URL is the only stdout output, so it stays pipeable.
 	fmt.Fprintln(cmd.OutOrStdout(), streamURL)
 
+	caster := cast.NewCaster()
+	ui := chooseUI(cmd, opts, eng, file, caster, castDev, vlcBin)
+
 	if castDev != nil && !cast.ProbablySupported(file.Name()) {
-		fmt.Fprintf(errOut,
-			"Warning: %s may not play on the default Chromecast receiver; casting anyway.\n",
+		ui.Logf("Warning: %s may not play on the default Chromecast receiver; casting anyway.",
 			filepath.Ext(file.Name()))
 	}
 
@@ -148,7 +153,60 @@ func run(cmd *cobra.Command, source string, opts options) error {
 		streamURL: streamURL,
 		vlcBin:    vlcBin,
 		castDev:   castDev,
+		caster:    caster,
+		ui:        ui,
 		errOut:    errOut,
+	})
+}
+
+// chooseUI selects the dashboard TUI when the terminal supports it (and
+// --no-tui is unset), the plain line output otherwise.
+func chooseUI(
+	cmd *cobra.Command,
+	opts options,
+	eng *engine.Engine,
+	file *engine.File,
+	caster *cast.Caster,
+	castDev *cast.Device,
+	vlcBin string,
+) sessionUI {
+	errOut := cmd.ErrOrStderr()
+
+	if !useTUI(opts.noTUI, errOut, cmd.InOrStdin()) {
+		return newPlainUI(errOut, eng, file)
+	}
+
+	backend := "http"
+
+	var (
+		device   string
+		controls tui.CastController
+	)
+
+	switch {
+	case castDev != nil:
+		backend = "chromecast"
+		device = castDev.Name
+
+		if castDev.Model != "" {
+			device += " (" + castDev.Model + ")"
+		}
+
+		controls = caster
+	case vlcBin != "":
+		backend = "vlc"
+	}
+
+	return tui.New(tui.Config{
+		Out:          errOut,
+		FileName:     file.Name(),
+		FileSize:     file.Size(),
+		FileProgress: file.BytesCompleted,
+		Snapshot:     eng.Snapshot,
+		Trackers:     eng.Trackers(),
+		Backend:      backend,
+		Device:       device,
+		Controls:     controls,
 	})
 }
 
@@ -293,12 +351,11 @@ func resolveListen(opts options, castDev *cast.Device) (string, string, error) {
 	return opts.listen, "", nil
 }
 
-// serveLoop runs the HTTP server, progress reporting and the optional
-// player session (VLC or Chromecast) until the context is canceled.
+// serveLoop runs the HTTP server, the session UI and the optional player
+// session (VLC or Chromecast) until the context is canceled or the UI
+// quits.
 func serveLoop(ctx context.Context, cancel context.CancelFunc, s session) error {
 	group, gctx := errgroup.WithContext(ctx)
-
-	castStatus := &atomic.Pointer[cast.MediaStatus]{}
 
 	group.Go(s.srv.Serve)
 
@@ -309,9 +366,12 @@ func serveLoop(ctx context.Context, cancel context.CancelFunc, s session) error 
 	})
 
 	group.Go(func() error {
-		reportProgress(gctx, s.eng, s.file, castStatus, s.errOut)
+		err := s.ui.Run(gctx)
 
-		return nil
+		// The UI returning (user quit) ends the whole session.
+		cancel()
+
+		return err
 	})
 
 	if s.vlcBin != "" {
@@ -333,28 +393,9 @@ func serveLoop(ctx context.Context, cancel context.CancelFunc, s session) error 
 
 	if s.castDev != nil {
 		group.Go(func() error {
-			caster := cast.NewCaster()
+			s.caster.OnStatus = s.ui.CastStatus
 
-			var lastState string
-
-			caster.OnStatus = func(status cast.MediaStatus) {
-				castStatus.Store(&status)
-
-				if status.State == "" || status.State == lastState {
-					return
-				}
-
-				lastState = status.State
-
-				line := strings.ToLower(status.State)
-				if status.Reason != "" {
-					line += " (" + strings.ToLower(status.Reason) + ")"
-				}
-
-				fmt.Fprintf(s.errOut, "\nChromecast: %s\n", line)
-			}
-
-			err := caster.Run(gctx, *s.castDev, s.streamURL, server.ContentType(s.file.Name()))
+			err := s.caster.Run(gctx, *s.castDev, s.streamURL, server.ContentType(s.file.Name()))
 
 			// The cast session ending ends pairflix, like VLC.
 			cancel()
@@ -372,81 +413,6 @@ func serveLoop(ctx context.Context, cancel context.CancelFunc, s session) error 
 	}
 
 	return nil
-}
-
-// reportProgress writes a single self-overwriting progress line every 2s,
-// including cast playback state when available.
-func reportProgress(
-	ctx context.Context,
-	eng *engine.Engine,
-	file *engine.File,
-	castStatus *atomic.Pointer[cast.MediaStatus],
-	out io.Writer,
-) {
-	ticker := time.NewTicker(2 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			stats := eng.Stats()
-			done := file.BytesCompleted()
-			total := file.Size()
-
-			var pct float64
-			if total > 0 {
-				pct = float64(done) / float64(total) * 100
-			}
-
-			fmt.Fprintf(out, "\r⇣ %s / %s (%.1f%%)  peers: %d%s   ",
-				humanBytes(done), humanBytes(total), pct, stats.Peers,
-				castSuffix(castStatus.Load()))
-		}
-	}
-}
-
-// castSuffix renders the playback part of the progress line, e.g.
-// " | ▶ 01:23/14:48". Empty when no playback status is known.
-func castSuffix(status *cast.MediaStatus) string {
-	if status == nil || status.State == "" ||
-		status.State == cast.StateConnected || status.State == cast.StateDisconnected {
-		return ""
-	}
-
-	icons := map[string]string{
-		"PLAYING":   "▶",
-		"PAUSED":    "⏸",
-		"BUFFERING": "◌",
-	}
-
-	icon, ok := icons[status.State]
-	if !ok {
-		icon = strings.ToLower(status.State)
-	}
-
-	if status.Duration <= 0 {
-		return " | " + icon
-	}
-
-	return fmt.Sprintf(" | %s %s/%s", icon,
-		fmtPlayTime(status.Position), fmtPlayTime(status.Duration))
-}
-
-// fmtPlayTime formats a playback position as mm:ss, or h:mm:ss past an hour.
-func fmtPlayTime(d time.Duration) string {
-	d = d.Round(time.Second)
-
-	h := int(d.Hours())
-	m := int(d.Minutes()) % 60
-	s := int(d.Seconds()) % 60
-
-	if h > 0 {
-		return fmt.Sprintf("%d:%02d:%02d", h, m, s)
-	}
-
-	return fmt.Sprintf("%02d:%02d", m, s)
 }
 
 // resolveDataDir returns path (created if needed) or a fresh temp dir.
@@ -477,7 +443,7 @@ func selectVideoFile(cmd *cobra.Command, eng *engine.Engine) (*engine.File, erro
 		fmt.Fprintln(errOut, "Files in torrent:")
 
 		for _, fi := range eng.Files() {
-			fmt.Fprintf(errOut, "  %s (%s)\n", fi.Path, humanBytes(fi.Length))
+			fmt.Fprintf(errOut, "  %s (%s)\n", fi.Path, units.HumanBytes(fi.Length))
 		}
 
 		return nil, errors.New("no video files found in torrent")

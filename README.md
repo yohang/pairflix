@@ -45,7 +45,16 @@ pairflix movie.torrent --cast=192.168.1.21        # direct IP, no discovery
 pairflix movie.torrent --listen 0.0.0.0:8888      # fixed listen address
 pairflix movie.torrent --path ~/Downloads/movie   # keep data somewhere specific
 pairflix movie.torrent --no-upload                # don't upload to peers
+pairflix movie.torrent --no-tui                   # plain line output
 ```
+
+## Dashboard
+
+In a terminal, pairflix shows a full-screen dashboard: transfer rates,
+peer table, piece map, tracker list, playback state and an event log.
+Keys: `q` quit, `space` pause/resume cast, `s` stop cast. It falls back to
+plain line output with `--no-tui` or automatically when output is piped —
+the stream URL is always written raw to stdout either way.
 
 The stream URL is the only stdout output, so it can be piped. Downloaded
 data is always kept on disk (the directory is printed on exit).
