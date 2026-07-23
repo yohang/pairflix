@@ -56,6 +56,22 @@ type session struct {
 // hangs in third-party teardown paths (cast connection, torrent client).
 const shutdownGrace = 15 * time.Second
 
+// installShutdownWatchdog arms a goroutine that, once ctx is canceled,
+// restores default signal handling (second Ctrl+C kills immediately) and
+// force-exits if graceful shutdown exceeds shutdownGrace.
+func installShutdownWatchdog(ctx context.Context, stop context.CancelFunc, errOut io.Writer) {
+	go func() {
+		<-ctx.Done()
+
+		stop()
+
+		fmt.Fprintln(errOut, "\nShutting down (press Ctrl+C again to force)...")
+		time.Sleep(shutdownGrace)
+		fmt.Fprintln(errOut, "forced exit: graceful shutdown timed out")
+		os.Exit(1)
+	}()
+}
+
 // run streams the torrent or magnet in source until interrupted (or until
 // the player session ends when --vlc or --cast is set).
 func run(cmd *cobra.Command, source string, opts options) error {
@@ -64,18 +80,7 @@ func run(cmd *cobra.Command, source string, opts options) error {
 
 	errOut := cmd.ErrOrStderr()
 
-	go func() {
-		<-ctx.Done()
-
-		// Restore default signal behavior: a second Ctrl+C kills the
-		// process immediately instead of being swallowed.
-		stop()
-
-		fmt.Fprintln(errOut, "\nShutting down (press Ctrl+C again to force)...")
-		time.Sleep(shutdownGrace)
-		fmt.Fprintln(errOut, "forced exit: graceful shutdown timed out")
-		os.Exit(1)
-	}()
+	installShutdownWatchdog(ctx, stop, errOut)
 
 	// Fail fast: locate the playback target before downloading anything.
 	vlcBin, err := findVLC(opts)

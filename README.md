@@ -80,6 +80,24 @@ pairflix movie.torrent --no-upload                # don't upload to peers
 pairflix movie.torrent --no-tui                   # plain line output
 ```
 
+## Web server
+
+`pairflix webserver` serves a minimal web page to trigger streams remotely:
+paste a magnet link or upload a `.torrent`, press Stream, and the media
+plays on the backend chosen at launch. One stream at a time; a Stop button
+ends it. Multi-video torrents show a file picker in the page.
+
+```sh
+pairflix webserver 127.0.0.1:8080                 # stream URL shown in the page
+pairflix webserver 0.0.0.0:8080 --cast="TV"       # every stream goes to the TV
+pairflix webserver 0.0.0.0:8080 --vlc             # plays in VLC on this machine
+```
+
+⚠️ The interface is unauthenticated — anyone who can reach the address
+controls playback and downloads. Bind wisely. Ports below 1024 need
+privileges: use a high port or
+`sudo setcap 'cap_net_bind_service=+ep' $(command -v pairflix)`.
+
 ## Dashboard
 
 In a terminal, pairflix shows a full-screen dashboard: transfer rates,

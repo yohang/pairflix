@@ -39,11 +39,21 @@ internal/cast         Chromecast mDNS discovery + playback session
 internal/tui          Bubble Tea dashboard; consumes engine.Snapshot and
                       cast.MediaStatus only — never imports anacrolix
 internal/units        shared byte/rate/time formatting
+internal/stream       programmatic session Manager (repeated start/stop in
+                      one process) used by the web mode
+internal/web          embedded web UI + JSON API over stream.Manager
 ```
 
-Dependency direction: `cli → engine, server, vlc, cast`. `server` knows
+Dependency direction: `cli → stream, web, engine, server, vlc, cast`;
+`stream → engine, server, cast, vlc`; `web → stream`. `server` knows
 nothing about torrents — it consumes the `server.Source` interface (`Name`,
 `Size`, `NewReader(ctx)`).
+
+Webserver mode notes: `stream.Manager` re-implements ~50 lines of the CLI
+serveLoop with DIFFERENT exit semantics (backend end → idle, not process
+exit) — the CLI path is deliberately not refactored onto it. Sessions use
+a generation counter so stale goroutines can't mutate a newer session's
+state. Stop cancels the session ctx (engine.Open aborts via ctx-select).
 
 The stream URL is the ONLY stdout output (pipeable); everything else goes to
 stderr.
