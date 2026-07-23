@@ -50,6 +50,29 @@ echo "deb [arch=amd64,arm64 signed-by=/etc/apt/keyrings/pairflix.gpg] http://yoh
 The `stable` suite works on any Debian or Ubuntu release — the binaries
 are static and dependency-free.
 
+#### Web server as a service
+
+The `pairflix-webserver` package runs the [web interface](#web-server) as a
+systemd service (enabled and started on install):
+
+```sh
+sudo apt install pairflix-webserver
+```
+
+Options live in `/etc/default/pairflix-webserver` — the default is
+`0.0.0.0:8888 --cast`: web UI on port 8888, casting to the single
+Chromecast on the network. After editing:
+
+```sh
+sudo systemctl restart pairflix-webserver
+journalctl -u pairflix-webserver -f     # logs
+```
+
+A headless service cannot prompt to pick a device: with several
+Chromecasts, target one by name (`--cast="Living Room TV"`) or IP —
+until then the service retries every 30 s. Downloads are kept in
+`/var/lib/pairflix-webserver`.
+
 ### Other platforms
 
 ```sh

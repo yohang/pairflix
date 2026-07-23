@@ -1,0 +1,10 @@
+# Options passed to `pairflix webserver` (see: pairflix webserver --help).
+#
+# Default: web UI on port 8888, casting to the single Chromecast on the
+# network. With several Chromecasts the service cannot pick one by itself:
+# target it by name, e.g.
+#   PAIRFLIX_WEBSERVER_OPTS='0.0.0.0:8888 --cast="Living Room TV"'
+# No Chromecast? Drop --cast (the page shows a stream URL) or use --vlc.
+#
+# Apply changes with: systemctl restart pairflix-webserver
+PAIRFLIX_WEBSERVER_OPTS="0.0.0.0:8888 --cast"

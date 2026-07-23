@@ -101,6 +101,20 @@ stderr.
   folds position/duration into the progress line (castSuffix in
   internal/cli/run.go).
 
+## Packaging
+
+- `packaging/` holds the Debian bits for the `pairflix-webserver` meta
+  package (systemd unit, `/etc/default` conffile, maintainer scripts),
+  wired in `.goreleaser.yaml` (nfpms id `webserver-deb`). `meta: true`
+  yields a single `Architecture: all` deb automatically.
+- goreleaser does NOT template `nfpms.dependencies` — keep the depends
+  unversioned (`pairflix`).
+- The unit runs ExecStart through `sh -c 'eval exec …'` because systemd's
+  own `$VAR` expansion word-splits without honoring quotes, which would
+  break `--cast="Living Room TV"` in `PAIRFLIX_WEBSERVER_OPTS`.
+- The release workflow publishes every `dist/*.deb` to the APT repo —
+  adding a package needs no CI change.
+
 ## Streaming notes
 
 - mp4 with a trailing `moov` atom starts slowly (player must fetch the tail
