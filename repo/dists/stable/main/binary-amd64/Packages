@@ -1,18 +1,37 @@
 Package: pairflix
-Version: 0.2.1
+Version: 0.2.2
 Architecture: amd64
 Architecture-Variant: amd64v1
 Maintainer: Yohan Giarelli <yohan@les-tilleuls.coop>
-Installed-Size: 25398
+Installed-Size: 25458
 Homepage: https://github.com/yohang/pairflix
 Priority: optional
 Section: utils
-Filename: pool/main/p/pairflix/pairflix_0.2.1_amd64.deb
-Size: 9635146
-SHA256: a71e91211b1535eaa1adc5e5ff4ff98a41c5da7cd4747f9963f43717de74f83f
-SHA1: 08ebf10b6042cbd327e0e4374d8e313edec48494
-MD5sum: 621a82ed7f03f993294b8e032b44525b
+Filename: pool/main/p/pairflix/pairflix_0.2.2_amd64.deb
+Size: 9662084
+SHA256: f0abcf59dc2eee6d4115b1f27b8ee0b7db6b43b6df317dd2958d88f188d89f76
+SHA1: 167ffe890ead215ef212e98f03d7f7f06586d2e1
+MD5sum: 2724a44e7207f3e5860da76b2dd8c7b0
 Description: Stream video from torrents while they download.
  A peerflix equivalent written in Go: serves an HTTP video stream with
  Range/seek support, plays directly in VLC and casts to Chromecast.
+
+Package: pairflix-webserver
+Version: 0.2.2
+Architecture: all
+Maintainer: Yohan Giarelli <yohan@les-tilleuls.coop>
+Installed-Size: 35
+Depends: pairflix
+Homepage: https://github.com/yohang/pairflix
+Priority: optional
+Section: utils
+Filename: pool/main/p/pairflix-webserver/pairflix-webserver_0.2.2_all.deb
+Size: 14138
+SHA256: 3ed439576fa40238f1e280e13367181322500a8c128888cd5846522d11f6aba6
+SHA1: ab1bad96b0980f6ca419838b7af20948b15d5a05
+MD5sum: 069e4e1a0a9be8acf421a78945ff0817
+Description: Run the pairflix web interface as a systemd service.
+ Serves the pairflix webserver mode as a daemon: a web page that
+ streams submitted torrents and magnet links to the configured
+ backend (Chromecast, VLC or a plain HTTP stream URL).
 
