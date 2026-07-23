@@ -39,6 +39,24 @@ archives:
       - LICENSE
       - README.md
 
+nfpms:
+  - id: deb
+    package_name: pairflix
+    formats: [deb]
+    maintainer: Yohan Giarelli <yohan@les-tilleuls.coop>
+    homepage: https://github.com/yohang/pairflix
+    description: |-
+      Stream video from torrents while they download.
+      A peerflix equivalent written in Go: serves an HTTP video stream with
+      Range/seek support, plays directly in VLC and casts to Chromecast.
+    license: GPL-3.0
+    section: utils
+    priority: optional
+    bindir: /usr/bin
+    contents:
+      - src: LICENSE
+        dst: /usr/share/doc/pairflix/copyright
+
 checksum:
   name_template: checksums.txt
 
