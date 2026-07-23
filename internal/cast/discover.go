@@ -31,38 +31,64 @@ func NewDiscoverer() *Discoverer {
 	}
 }
 
-// Devices collects entries for the full timeout window, keeps video-capable
-// devices, dedupes by UUID and returns them sorted by name.
+// discoveryRounds is how many fresh mDNS queries a discovery window runs:
+// a single resolver misses announcements often (observed: identical queries
+// returning different subsets of the same network), so the window is split
+// into rounds and the results merged.
+const discoveryRounds = 2
+
+// Devices runs discoveryRounds mDNS queries across the timeout window,
+// keeps video-capable devices, dedupes by UUID and returns them sorted by
+// name. Individual round failures are tolerated as long as one succeeds.
 func (d *Discoverer) Devices(ctx context.Context) ([]Device, error) {
-	ctx, cancel := context.WithTimeout(ctx, d.Timeout)
-	defer cancel()
-
-	entries, err := d.DiscoverFn(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("cast: discovery: %w", err)
-	}
-
 	seen := make(map[string]struct{})
 
-	var devices []Device
+	var (
+		devices  []Device
+		errs     []error
+		perRound = d.Timeout / discoveryRounds
+	)
 
-	for entry := range entries {
-		if _, dup := seen[entry.UUID]; dup {
+	for range discoveryRounds {
+		if err := ctx.Err(); err != nil {
+			return nil, fmt.Errorf("cast: discovery: %w", err)
+		}
+
+		roundCtx, cancel := context.WithTimeout(ctx, perRound)
+
+		entries, err := d.DiscoverFn(roundCtx)
+		if err != nil {
+			cancel()
+
+			errs = append(errs, err)
+
 			continue
 		}
 
-		seen[entry.UUID] = struct{}{}
+		for entry := range entries {
+			if _, dup := seen[entry.UUID]; dup {
+				continue
+			}
 
-		if !isVideoDevice(entry.CA, entry.Model) {
-			continue
+			seen[entry.UUID] = struct{}{}
+
+			if !isVideoDevice(entry.CA, entry.Model) {
+				continue
+			}
+
+			devices = append(devices, Device{
+				Name:  entry.Name,
+				Model: entry.Model,
+				Addr:  entry.Addr,
+				Port:  entry.Port,
+			})
 		}
 
-		devices = append(devices, Device{
-			Name:  entry.Name,
-			Model: entry.Model,
-			Addr:  entry.Addr,
-			Port:  entry.Port,
-		})
+		cancel()
+	}
+
+	if len(errs) == discoveryRounds {
+		return nil, fmt.Errorf("cast: discovery: %w", errors.Join(errs...))
 	}
 
 	if len(devices) == 0 {

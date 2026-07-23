@@ -91,6 +91,74 @@ func TestDevicesDiscoveryError(t *testing.T) {
 	}
 }
 
+func TestDevicesMergesRounds(t *testing.T) {
+	t.Parallel()
+
+	// Each discovery round returns a different device; both must appear.
+	round := 0
+	d := &Discoverer{
+		Timeout: 100 * time.Millisecond,
+		DiscoverFn: func(context.Context) (<-chan Entry, error) {
+			round++
+			ch := make(chan Entry, 1)
+
+			if round == 1 {
+				ch <- Entry{UUID: "a", Name: "Bedroom TV", Model: "Chromecast", CA: "5"}
+			} else {
+				ch <- Entry{UUID: "b", Name: "TV", Model: "Google TV", CA: "199173"}
+			}
+
+			close(ch)
+
+			return ch, nil
+		},
+	}
+
+	devices, err := d.Devices(context.Background())
+	if err != nil {
+		t.Fatalf("Devices: %v", err)
+	}
+
+	if len(devices) != 2 {
+		t.Fatalf("len = %d, want 2 (rounds merged)", len(devices))
+	}
+
+	if round != 2 {
+		t.Errorf("rounds = %d, want 2", round)
+	}
+}
+
+func TestDevicesToleratesOneFailedRound(t *testing.T) {
+	t.Parallel()
+
+	round := 0
+	d := &Discoverer{
+		Timeout: 100 * time.Millisecond,
+		DiscoverFn: func(context.Context) (<-chan Entry, error) {
+			round++
+			if round == 1 {
+				return nil, errors.New("first query lost")
+			}
+
+			ch := make(chan Entry, 1)
+			ch <- Entry{UUID: "a", Name: "TV", Model: "Google TV", CA: "199173"}
+
+			close(ch)
+
+			return ch, nil
+		},
+	}
+
+	devices, err := d.Devices(context.Background())
+	if err != nil {
+		t.Fatalf("Devices: %v", err)
+	}
+
+	if len(devices) != 1 || devices[0].Name != "TV" {
+		t.Errorf("devices = %v, want the second-round TV", devices)
+	}
+}
+
 func TestByName(t *testing.T) {
 	t.Parallel()
 
