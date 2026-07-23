@@ -1,7 +1,6 @@
 # pairflix
 
 [![CI](https://github.com/yohang/pairflix/actions/workflows/ci.yml/badge.svg)](https://github.com/yohang/pairflix/actions/workflows/ci.yml)
-[![Go Report Card](https://goreportcard.com/badge/github.com/yohang/pairflix)](https://goreportcard.com/report/github.com/yohang/pairflix)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 
 A [peerflix](https://github.com/mafintosh/peerflix) equivalent written in Go:
